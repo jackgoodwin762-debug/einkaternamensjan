@@ -41,10 +41,49 @@
       font-weight: bold;
     }
 
-    /* Translation loading state */
-    .translating {
-      opacity: 0.5;
-      pointer-events: none;
+    /* Footnotes styling */
+    .footnotes {
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 2px solid rgba(255,255,255,0.2);
+    }
+
+    .footnotes h4 {
+      margin-bottom: 1rem;
+      font-size: 1.2rem;
+    }
+
+    .footnotes ol {
+      padding-left: 1.5rem;
+      line-height: 1.8;
+    }
+
+    .footnotes li {
+      margin-bottom: 0.75rem;
+    }
+
+    .footnote-ref {
+      color: #64a0ff;
+      text-decoration: none;
+      font-weight: bold;
+      vertical-align: super;
+      font-size: 0.8em;
+      padding: 0 0.2em;
+    }
+
+    .footnote-ref:hover {
+      text-decoration: underline;
+    }
+
+    .footnote-backref {
+      color: #64a0ff;
+      text-decoration: none;
+      margin-left: 0.5rem;
+      font-size: 0.9em;
+    }
+
+    .footnote-backref:hover {
+      text-decoration: underline;
     }
 
     /* Comment section styling */
@@ -179,6 +218,15 @@
       border-radius: 4px;
       font-size: 0.9rem;
     }
+
+    .translation-error {
+      background: rgba(255, 100, 100, 0.15);
+      border-left: 3px solid rgba(255, 100, 100, 0.5);
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+      border-radius: 4px;
+      font-size: 0.9rem;
+    }
   </style>
 </head>
 <body>
@@ -203,11 +251,14 @@
     var COMMENTS_KEY = 'blog_comments';
     var TRANSLATIONS_KEY = 'blog_translations';
     var CURRENT_LANG_KEY = 'blog_current_lang';
+    var FOOTNOTES_KEY = 'blog_footnotes';
 
     var commentsStore = loadCommentsFromStorage();
     var translationsCache = loadTranslationsFromStorage();
+    var footnotesStore = loadFootnotesFromStorage();
     var currentLang = localStorage.getItem(CURRENT_LANG_KEY) || 'en';
     var originalContent = new Map();
+    var articleLanguages = new Map(); // Track the original language of each article
 
     function loadCommentsFromStorage() {
       try {
@@ -245,6 +296,24 @@
       }
     }
 
+    function loadFootnotesFromStorage() {
+      try {
+        var stored = localStorage.getItem(FOOTNOTES_KEY);
+        return stored ? JSON.parse(stored) : {};
+      } catch (e) {
+        console.error('Error loading footnotes:', e);
+        return {};
+      }
+    }
+
+    function saveFootnotesToStorage(footnotes) {
+      try {
+        localStorage.setItem(FOOTNOTES_KEY, JSON.stringify(footnotes));
+      } catch (e) {
+        console.error('Error saving footnotes:', e);
+      }
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
       var articles = document.querySelectorAll('main article');
       
@@ -255,14 +324,39 @@
           article.id = slug;
         }
         
-        originalContent.set(article.id, article.innerHTML);
+        // Store original content without comment section and footnotes
+        var clone = article.cloneNode(true);
+        var existingComments = clone.querySelector('.comment-section');
+        var existingFootnotes = clone.querySelector('.footnotes');
+        if (existingComments) existingComments.remove();
+        if (existingFootnotes) existingFootnotes.remove();
+        originalContent.set(article.id, clone.innerHTML);
+        
+        // Detect the language of this article
+        var articleText = clone.textContent.trim();
+        var detectedLang = detectLanguage(articleText);
+        articleLanguages.set(article.id, detectedLang);
+        console.log('Article "' + article.id + '" detected language:', detectedLang);
         
         if (!commentsStore[article.id]) {
           commentsStore[article.id] = [];
         }
         
-        var commentSection = createCommentSection(article.id);
-        article.appendChild(commentSection);
+        if (!footnotesStore[article.id]) {
+          footnotesStore[article.id] = [];
+        }
+        
+        // Process existing footnotes from content
+        processFootnotes(article);
+        
+        // Add footnotes section
+        renderFootnotes(article.id);
+        
+        // Add comment section if it doesn't exist
+        if (!article.querySelector('.comment-section')) {
+          var commentSection = createCommentSection(article.id);
+          article.appendChild(commentSection);
+        }
         renderComments(article.id);
       });
 
@@ -276,8 +370,124 @@
       updateLanguageButtons();
       if (currentLang === 'de') {
         translateAllArticles('de');
+      } else if (currentLang === 'en') {
+        translateAllArticles('en');
       }
     });
+
+    function detectLanguage(text) {
+      // Simple language detection based on common words
+      // Take a sample of the text (first 500 characters)
+      var sample = text.substring(0, 500).toLowerCase();
+      
+      // German indicators
+      var germanWords = ['und', 'der', 'die', 'das', 'ich', 'ist', 'nicht', 'sie', 'mit', 'auf', 'für', 'ein', 'eine', 'auch', 'sich', 'werden', 'aus', 'aber', 'über', 'können', 'müssen', 'sollte', 'würde', 'schon', 'mehr', 'durch', 'beim', 'zur', 'vom', 'zum'];
+      var germanChars = ['ä', 'ö', 'ü', 'ß'];
+      
+      // English indicators
+      var englishWords = ['the', 'and', 'is', 'in', 'to', 'of', 'that', 'it', 'for', 'on', 'with', 'as', 'was', 'at', 'be', 'this', 'have', 'from', 'or', 'one', 'had', 'by', 'but', 'not', 'what', 'all', 'were', 'when', 'there', 'can'];
+      
+      var germanScore = 0;
+      var englishScore = 0;
+      
+      // Check for German special characters (strong indicator)
+      germanChars.forEach(function(char) {
+        if (sample.indexOf(char) !== -1) {
+          germanScore += 5; // Strong indicator
+        }
+      });
+      
+      // Count word matches
+      germanWords.forEach(function(word) {
+        var regex = new RegExp('\\b' + word + '\\b', 'gi');
+        var matches = sample.match(regex);
+        if (matches) {
+          germanScore += matches.length;
+        }
+      });
+      
+      englishWords.forEach(function(word) {
+        var regex = new RegExp('\\b' + word + '\\b', 'gi');
+        var matches = sample.match(regex);
+        if (matches) {
+          englishScore += matches.length;
+        }
+      });
+      
+      console.log('Language detection scores - German:', germanScore, 'English:', englishScore);
+      
+      // Return the language with higher score, default to English
+      return germanScore > englishScore ? 'de' : 'en';
+    }
+
+    function processFootnotes(article) {
+      var articleId = article.id;
+      var content = article.innerHTML;
+      
+      // Look for footnote patterns like [1], [2], etc.
+      var footnotePattern = /\[(\d+)\]/g;
+      var match;
+      var footnoteRefs = [];
+      
+      while ((match = footnotePattern.exec(content)) !== null) {
+        footnoteRefs.push({
+          number: parseInt(match[1]),
+          index: match.index
+        });
+      }
+      
+      // Replace footnote markers with proper links
+      if (footnoteRefs.length > 0) {
+        var newContent = content;
+        for (var i = footnoteRefs.length - 1; i >= 0; i--) {
+          var ref = footnoteRefs[i];
+          var before = newContent.substring(0, ref.index);
+          var after = newContent.substring(ref.index + ('[' + ref.number + ']').length);
+          newContent = before + '<a href="#fn-' + articleId + '-' + ref.number + '" class="footnote-ref" id="fnref-' + articleId + '-' + ref.number + '">[' + ref.number + ']</a>' + after;
+        }
+        article.innerHTML = newContent;
+      }
+    }
+
+    function renderFootnotes(postId) {
+      var article = document.getElementById(postId);
+      if (!article) return;
+      
+      var footnotes = footnotesStore[postId] || [];
+      
+      // Remove existing footnotes section
+      var existingFootnotes = article.querySelector('.footnotes');
+      if (existingFootnotes) {
+        existingFootnotes.remove();
+      }
+      
+      if (footnotes.length === 0) return;
+      
+      var footnotesSection = document.createElement('div');
+      footnotesSection.className = 'footnotes';
+      
+      var heading = document.createElement('h4');
+      heading.textContent = 'Footnotes';
+      footnotesSection.appendChild(heading);
+      
+      var ol = document.createElement('ol');
+      footnotes.forEach(function(footnote) {
+        var li = document.createElement('li');
+        li.id = 'fn-' + postId + '-' + footnote.number;
+        li.innerHTML = escapeHtml(footnote.text) + ' <a href="#fnref-' + postId + '-' + footnote.number + '" class="footnote-backref">↩</a>';
+        ol.appendChild(li);
+      });
+      
+      footnotesSection.appendChild(ol);
+      
+      // Insert before comment section
+      var commentSection = article.querySelector('.comment-section');
+      if (commentSection) {
+        article.insertBefore(footnotesSection, commentSection);
+      } else {
+        article.appendChild(footnotesSection);
+      }
+    }
 
     function updateLanguageButtons() {
       document.getElementById('lang-en').classList.toggle('active', currentLang === 'en');
@@ -287,18 +497,12 @@
     function switchLanguage(lang) {
       if (lang === currentLang) return;
       
-      console.log('Switching language to:', lang);
-      
       currentLang = lang;
       localStorage.setItem(CURRENT_LANG_KEY, lang);
       updateLanguageButtons();
 
-      if (lang === 'en') {
-        restoreOriginalContent();
-      } else {
-        console.log('Starting translation...');
-        translateAllArticles('de');
-      }
+      // Always translate to the selected language
+      translateAllArticles(lang);
     }
 
     function restoreOriginalContent() {
@@ -308,6 +512,8 @@
         if (original) {
           var commentSection = article.querySelector('.comment-section');
           article.innerHTML = original;
+          processFootnotes(article);
+          renderFootnotes(article.id);
           if (commentSection) {
             article.appendChild(commentSection);
           }
@@ -317,229 +523,202 @@
 
     function translateAllArticles(targetLang) {
       var articles = document.querySelectorAll('main article');
-      console.log('Found articles to translate:', articles.length);
-      
-      var index = 0;
-      function translateNext() {
-        if (index >= articles.length) return;
+      articles.forEach(function(article) {
+        var sourceLang = articleLanguages.get(article.id) || 'en';
         
-        var article = articles[index];
-        var commentSection = article.querySelector('.comment-section');
-        
-        translateArticle(article, targetLang).then(function() {
-          if (commentSection) {
-            article.appendChild(commentSection);
-          }
-          index++;
-          translateNext();
-        });
-      }
-      
-      translateNext();
-    }
-
-    function translateArticle(article, targetLang) {
-      return new Promise(function(resolve) {
-        var articleId = article.id;
-        var cacheKey = articleId + '_' + targetLang;
-        
-        console.log('Translating article:', articleId);
-        
-        if (translationsCache[cacheKey]) {
-          console.log('Using cached translation');
-          var commentSection = article.querySelector('.comment-section');
-          article.innerHTML = translationsCache[cacheKey];
-          if (commentSection) {
-            article.appendChild(commentSection);
-          }
-          resolve();
-          return;
-        }
-
-        var commentSection = article.querySelector('.comment-section');
-        if (commentSection) {
-          commentSection.remove();
-        }
-
-        var notice = document.createElement('div');
-        notice.className = 'translation-notice';
-        notice.textContent = 'Translating...';
-        article.insertBefore(notice, article.firstChild);
-
-        var articleHTML = article.innerHTML;
-        console.log('Article HTML length:', articleHTML.length);
-        
-        var lines = articleHTML.split(/<br\s*\/?>/i);
-        console.log('Split into lines:', lines.length);
-        
-        var translatedLines = [];
-        var lineIndex = 0;
-
-        function translateNextLine() {
-          if (lineIndex >= lines.length) {
-            console.log('Translation complete, reconstructing article');
-            article.innerHTML = translatedLines.join('<br>');
-            
-            var finalNotice = document.createElement('div');
-            finalNotice.className = 'translation-notice';
-            finalNotice.textContent = 'Translated from English to German';
-            article.insertBefore(finalNotice, article.firstChild);
-            
-            translationsCache[cacheKey] = article.innerHTML;
-            saveTranslationsToStorage(translationsCache);
+        // Only translate if source and target languages are different
+        if (sourceLang === targetLang) {
+          // Restore original content if already in target language
+          var original = originalContent.get(article.id);
+          if (original) {
+            var commentSection = article.querySelector('.comment-section');
+            article.innerHTML = original;
+            processFootnotes(article);
+            renderFootnotes(article.id);
             if (commentSection) {
               article.appendChild(commentSection);
             }
-            resolve();
-            return;
           }
-
-          var line = lines[lineIndex];
-          var tempDiv = document.createElement('div');
-          tempDiv.innerHTML = line;
-          var textContent = tempDiv.textContent.trim();
-          
-          console.log('Line ' + lineIndex + ':', textContent.substring(0, 50));
-          
-          if (textContent && !tempDiv.querySelector('.translation-notice')) {
-            if (/<h[1-6]>/.test(line) || /<pre>/.test(line) || /<code>/.test(line) || /<a/.test(line)) {
-              console.log('Line contains HTML tags, parsing...');
-              var parser = new DOMParser();
-              var doc = parser.parseFromString(line, 'text/html');
-              var textNodes = [];
-              var walker = document.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
-              var node;
-              while (node = walker.nextNode()) {
-                var text = node.textContent.trim();
-                if (text && node.parentElement.tagName !== 'CODE' && node.parentElement.tagName !== 'A') {
-                  textNodes.push({node: node, text: text});
-                }
-              }
-              
-              if (textNodes.length > 0) {
-                var nodeIndex = 0;
-                function translateNextNode() {
-                  if (nodeIndex >= textNodes.length) {
-                    translatedLines.push(doc.body.innerHTML);
-                    lineIndex++;
-                    translateNextLine();
-                    return;
-                  }
-                  
-                  var nodeData = textNodes[nodeIndex];
-                  console.log('Translating node text:', nodeData.text.substring(0, 30));
-                  translateText(nodeData.text, targetLang).then(function(translated) {
-                    if (translated) {
-                      console.log('Translated to:', translated.substring(0, 30));
-                      nodeData.node.textContent = translated;
-                    }
-                    nodeIndex++;
-                    translateNextNode();
-                  });
-                }
-                translateNextNode();
-              } else {
-                translatedLines.push(line);
-                lineIndex++;
-                translateNextLine();
-              }
-            } else {
-              console.log('Plain text line, translating:', textContent.substring(0, 30));
-              translateText(textContent, targetLang).then(function(translated) {
-                console.log('Translated result:', translated ? translated.substring(0, 30) : 'null');
-                translatedLines.push(translated || line);
-                lineIndex++;
-                translateNextLine();
-              });
-            }
-          } else {
-            console.log('Skipping empty line');
-            translatedLines.push(line);
-            lineIndex++;
-            translateNextLine();
-          }
+        } else {
+          translateArticle(article, targetLang, sourceLang);
         }
-
-        translateNextLine();
       });
     }
 
-    function translateText(text, targetLang) {
-      return new Promise(function(resolve) {
-        // MyMemory API has 500 char limit, so split long text into sentences
-        if (text.length > 450) {
-          // Split by sentences
-          var sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
-          var translatedSentences = [];
-          var sentenceIndex = 0;
-          
-          function translateNextSentence() {
-            if (sentenceIndex >= sentences.length) {
-              resolve(translatedSentences.join(' '));
-              return;
+    function translateArticle(article, targetLang, sourceLang) {
+      var articleId = article.id;
+      var cacheKey = articleId + '_' + sourceLang + '_' + targetLang;
+      
+      // Check cache first
+      if (translationsCache[cacheKey]) {
+        var commentSection = article.querySelector('.comment-section');
+        article.innerHTML = translationsCache[cacheKey];
+        renderFootnotes(articleId);
+        if (commentSection) {
+          article.appendChild(commentSection);
+        }
+        return;
+      }
+
+      // Show translating notice
+      var commentSection = article.querySelector('.comment-section');
+      var original = originalContent.get(articleId);
+      if (!original) return;
+
+      article.innerHTML = original;
+      
+      var notice = document.createElement('div');
+      notice.className = 'translation-notice';
+      notice.textContent = 'Translating...';
+      article.insertBefore(notice, article.firstChild);
+
+      // Extract all text nodes that need translation
+      var textElements = [];
+      extractTextElements(article, textElements);
+      
+      // Translate each text element
+      var translatedCount = 0;
+      var totalCount = textElements.length;
+
+      if (totalCount === 0) {
+        notice.remove();
+        renderFootnotes(articleId);
+        if (commentSection) {
+          article.appendChild(commentSection);
+        }
+        return;
+      }
+
+      textElements.forEach(function(elem) {
+        var originalText = elem.textContent.trim();
+        if (originalText.length > 0) {
+          translateWithLibreTranslate(originalText, targetLang, sourceLang).then(function(translated) {
+            if (translated) {
+              elem.textContent = translated;
             }
+            translatedCount++;
             
-            var sentence = sentences[sentenceIndex].trim();
-            if (sentence.length > 450) {
-              // If single sentence is too long, split by commas
-              var parts = sentence.split(',');
-              var partTranslations = [];
-              var partIndex = 0;
+            if (translatedCount === totalCount) {
+              var langNames = {
+                'en': 'English',
+                'de': 'German'
+              };
+              notice.textContent = 'Translated from ' + langNames[sourceLang] + ' to ' + langNames[targetLang];
+              notice.className = 'translation-notice';
               
-              function translateNextPart() {
-                if (partIndex >= parts.length) {
-                  translatedSentences.push(partTranslations.join(','));
-                  sentenceIndex++;
-                  translateNextSentence();
-                  return;
-                }
-                
-                translateSingleText(parts[partIndex].trim(), targetLang).then(function(translated) {
-                  partTranslations.push(translated || parts[partIndex]);
-                  partIndex++;
-                  translateNextPart();
-                });
+              // Cache the translation
+              var clone = article.cloneNode(true);
+              var cloneComments = clone.querySelector('.comment-section');
+              var cloneFootnotes = clone.querySelector('.footnotes');
+              if (cloneComments) cloneComments.remove();
+              if (cloneFootnotes) cloneFootnotes.remove();
+              translationsCache[cacheKey] = clone.innerHTML;
+              saveTranslationsToStorage(translationsCache);
+              
+              renderFootnotes(articleId);
+              if (commentSection) {
+                article.appendChild(commentSection);
               }
-              translateNextPart();
-            } else {
-              translateSingleText(sentence, targetLang).then(function(translated) {
-                translatedSentences.push(translated || sentence);
-                sentenceIndex++;
-                translateNextSentence();
-              });
             }
-          }
-          
-          translateNextSentence();
+          }).catch(function(error) {
+            console.error('Translation failed:', error);
+            translatedCount++;
+            
+            if (translatedCount === totalCount) {
+              notice.textContent = 'Translation failed. Please try again later.';
+              notice.className = 'translation-error';
+              
+              renderFootnotes(articleId);
+              if (commentSection) {
+                article.appendChild(commentSection);
+              }
+            }
+          });
         } else {
-          translateSingleText(text, targetLang).then(resolve);
+          translatedCount++;
+        }
+      });
+    }
+
+    function extractTextElements(node, results) {
+      // Skip comment sections, footnotes, and code blocks
+      if (node.classList && (node.classList.contains('comment-section') || 
+          node.classList.contains('footnotes') ||
+          node.classList.contains('translation-notice') ||
+          node.classList.contains('translation-error'))) {
+        return;
+      }
+
+      if (node.tagName === 'CODE' || node.tagName === 'PRE' || 
+          node.tagName === 'SCRIPT' || node.tagName === 'STYLE' ||
+          node.tagName === 'A') {
+        return;
+      }
+
+      // If it's a text node, check if it has meaningful content
+      if (node.nodeType === Node.TEXT_NODE) {
+        var text = node.textContent.trim();
+        if (text.length > 0) {
+          results.push(node);
+        }
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        // Recurse into child nodes
+        for (var i = 0; i < node.childNodes.length; i++) {
+          extractTextElements(node.childNodes[i], results);
+        }
+      }
+    }
+
+    function translateWithLibreTranslate(text, targetLang, sourceLang) {
+      return new Promise(function(resolve, reject) {
+        // Split long texts
+        if (text.length > 500) {
+          var sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+          var promises = sentences.map(function(sentence) {
+            return translateSingleText(sentence.trim(), targetLang, sourceLang);
+          });
+          
+          Promise.all(promises).then(function(results) {
+            resolve(results.join(' '));
+          }).catch(reject);
+        } else {
+          translateSingleText(text, targetLang, sourceLang).then(resolve).catch(reject);
         }
       });
     }
     
-    function translateSingleText(text, targetLang) {
-      return new Promise(function(resolve) {
-        var url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text) + '&langpair=en|' + targetLang;
+    function translateSingleText(text, targetLang, sourceLang) {
+      return new Promise(function(resolve, reject) {
+        // Use Google Translate's unofficial API via translate.googleapis.com
+        var url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=' + sourceLang + '&tl=' + targetLang + '&dt=t&q=' + encodeURIComponent(text);
         
         fetch(url)
-        .then(function(response) {
-          return response.json();
-        })
-        .then(function(data) {
-          console.log('Translation response:', data);
-          if (data.responseData && data.responseData.translatedText) {
-            resolve(data.responseData.translatedText);
-          } else if (data.responseStatus === 403) {
-            console.error('Translation limit exceeded');
-            resolve(null);
-          } else {
-            resolve(null);
-          }
-        })
-        .catch(function(error) {
-          console.error('Translation API error:', error);
-          resolve(null);
-        });
+          .then(function(response) {
+            if (!response.ok) {
+              throw new Error('Translation API error: ' + response.status);
+            }
+            return response.json();
+          })
+          .then(function(data) {
+            // Google Translate API returns nested arrays
+            // Format: [[[translated_text, original_text, null, null, score]]]
+            if (data && data[0] && data[0][0] && data[0][0][0]) {
+              var translated = '';
+              for (var i = 0; i < data[0].length; i++) {
+                if (data[0][i][0]) {
+                  translated += data[0][i][0];
+                }
+              }
+              resolve(translated || text);
+            } else {
+              console.warn('Unexpected translation response format');
+              resolve(text);
+            }
+          })
+          .catch(function(error) {
+            console.error('Translation error:', error);
+            resolve(text); // Fallback to original text
+          });
       });
     }
 
@@ -664,6 +843,35 @@
       div.textContent = text;
       return div.innerHTML;
     }
+
+    // Add footnote functionality
+    window.addFootnote = function(postId, number, text) {
+      if (!footnotesStore[postId]) {
+        footnotesStore[postId] = [];
+      }
+      
+      // Check if footnote already exists
+      var existing = footnotesStore[postId].find(function(fn) {
+        return fn.number === number;
+      });
+      
+      if (existing) {
+        existing.text = text;
+      } else {
+        footnotesStore[postId].push({
+          number: number,
+          text: text
+        });
+      }
+      
+      // Sort by number
+      footnotesStore[postId].sort(function(a, b) {
+        return a.number - b.number;
+      });
+      
+      saveFootnotesToStorage(footnotesStore);
+      renderFootnotes(postId);
+    };
   </script>
 </body>
 </html>
