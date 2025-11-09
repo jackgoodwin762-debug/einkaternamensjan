@@ -50,4 +50,4 @@ Man sieht heutzutage wie die Großkonzernen der USA dem amerikanischen Präsiden
 
 Erst Veröffentlicht am 29.10.2025.
 Zweite ausfuehrliche Veröffentlichung von 02.11.2025
-Uhrspruenglich auf Deutsch geschrieben.
+Urspruenglich auf Deutsch geschrieben.
